@@ -66,12 +66,7 @@ public class DialogueTypewriter : MonoBehaviour
     private static readonly HashSet<DialoguePage> recordedPages = new HashSet<DialoguePage>();
     private static readonly List<string> historyEntries = new List<string>();
 
-    // 滚动状态（当前显示的第一行）
-    private static int firstLine = 0;
-    private static int maxFirstLine = 0;
-
-    private RectTransform historyRect;
-    private float lastMouseY = 0f;
+    private DialogueScrollController historyScroll;
 
 
     // 进入播放模式时清空共享记录（防止编辑器里残留上一次的）
@@ -80,8 +75,6 @@ public class DialogueTypewriter : MonoBehaviour
     {
         recordedPages.Clear();
         historyEntries.Clear();
-        firstLine = 0;
-        maxFirstLine = 0;
     }
 
 
@@ -91,71 +84,7 @@ public class DialogueTypewriter : MonoBehaviour
         ClearAllText();
 
         if (historyText != null)
-            historyRect = historyText.GetComponent<RectTransform>();
-    }
-
-
-    void Update()
-    {
-        if (historyText == null || historyRect == null) return;
-        if (maxFirstLine <= 0) return;   // 内容没超过框，不需要滚动
-
-        // ============ 滚轮：一次滚一行 ============
-        float wheel = Input.mouseScrollDelta.y;
-        if (Mathf.Abs(wheel) > 0.01f && IsPointerInside(historyRect))
-        {
-            firstLine -= Mathf.RoundToInt(wheel);   // 上滚看前面，下滚看后面
-            ApplyScroll();
-        }
-
-        // ============ 按住拖拽（手机/鼠标都行）============
-        if (Input.GetMouseButton(0) && IsPointerInside(historyRect))
-        {
-            float lineHeight = GetLineHeight();
-            if (lineHeight > 0)
-            {
-                float dy = Input.mousePosition.y - lastMouseY;
-                firstLine -= Mathf.RoundToInt(dy / lineHeight);
-                ApplyScroll();
-            }
-        }
-
-        lastMouseY = Input.mousePosition.y;
-    }
-
-
-    float GetLineHeight()
-    {
-        if (historyText.textInfo.lineCount > 0)
-            return historyText.textInfo.lineInfo[0].lineHeight;
-        return historyText.fontSize;
-    }
-
-
-    void ApplyScroll()
-    {
-        firstLine = Mathf.Clamp(firstLine, 0, maxFirstLine);
-
-        // 从 firstLine 这一行开始显示
-        historyText.firstVisibleCharacter =
-            historyText.textInfo.lineInfo[firstLine].firstCharacterIndex;
-        historyText.maxVisibleLines = maxFirstLine + VisibleLineCount();
-    }
-
-
-    int VisibleLineCount()
-    {
-        float lineHeight = GetLineHeight();
-        if (lineHeight <= 0) return 1;
-        return Mathf.Max(1, Mathf.FloorToInt(historyRect.rect.height / lineHeight));
-    }
-
-
-    bool IsPointerInside(RectTransform rt)
-    {
-        Canvas canvas = GetComponentInParent<Canvas>();
-        Camera cam = canvas != null ? canvas.worldCamera : null;
-        return RectTransformUtility.RectangleContainsScreenPoint(rt, Input.mousePosition, cam);
+            historyScroll = historyText.GetComponentInParent<DialogueScrollController>(true);
     }
 
 
@@ -294,23 +223,15 @@ public class DialogueTypewriter : MonoBehaviour
 
 
     // ========================================
-    // ⭐ 重建历史文本 + 计算可滚动范围
-    //    从顶部开始往下排，超过框就能滚
+    // ⭐ 重建历史文本，通知滚动区域在布局完成后保持阅读位置
     // ========================================
     void RefreshHistory()
     {
+        bool followBottom = historyScroll != null && historyScroll.ShouldFollowBottom;
         // 段落与段落之间空一行
         historyText.text = string.Join("\n\n", historyEntries);
-
-        Canvas.ForceUpdateCanvases();
-
-        int totalLines = historyText.textInfo.lineCount;
-        int visible = VisibleLineCount();
-
-        maxFirstLine = Mathf.Max(0, totalLines - visible);
-        ApplyScroll();   // firstLine 保持不动（玩家翻到哪就是哪），只做夹取
-
-        Debug.Log($"[历史记录] 条目:{historyEntries.Count} 总行数:{totalLines} 一屏显示:{visible} 可滚:{maxFirstLine}");
+        if (historyScroll != null)
+            historyScroll.ContentChanged(followBottom);
     }
 
 
@@ -333,14 +254,14 @@ public class DialogueTypewriter : MonoBehaviour
         typedPages.Clear();             // 重置后所有句子恢复可打
         recordedPages.Clear();
         historyEntries.Clear();
-        firstLine = 0;
-        maxFirstLine = 0;
 
         if (historyText != null)
         {
             historyText.text = "";
             historyText.firstVisibleCharacter = 0;
-            historyText.maxVisibleLines = 999;
+            historyText.maxVisibleLines = int.MaxValue;
+            if (historyScroll != null)
+                historyScroll.ContentChanged(true);
         }
 
         ClearAllText();
